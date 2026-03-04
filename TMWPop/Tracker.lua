@@ -75,8 +75,6 @@ local function clamp(v, lo, hi) return math.min(math.max(v, lo), hi) end
 
 --[[--------------------------------------------------------------------
     Spell API wrappers (C_Spell for TWW/Midnight 11.x+, fallback for Classic)
-    Mirrors logic from ascott18/TellMeWhen Components/Core/Common/Cooldowns.lua
-    but standalone – no dependency on TMW.COMMON.
 ----------------------------------------------------------------------]]
 
 local GetSpellCooldown
@@ -85,7 +83,7 @@ if C_Spell and C_Spell.GetSpellCooldown then
     GetSpellCooldown = function(spell)
         local result = _fn(spell)
         if not result then return nil end
-        return result  -- table: { startTime, duration, isEnabled, modRate }
+        return result
     end
 else
     local _fn = _G.GetSpellCooldown
@@ -102,7 +100,7 @@ if C_Spell and C_Spell.GetSpellCharges then
     GetSpellCharges = function(spell)
         local result = _fn(spell)
         if not result then return nil end
-        return result  -- table: { currentCharges, maxCharges, cooldownStartTime, cooldownDuration, chargeModRate }
+        return result
     end
 elseif _G.GetSpellCharges then
     local _fn = _G.GetSpellCharges
@@ -121,45 +119,24 @@ local function ScanAuras(unit, dest)
     for k in pairs(dest) do dest[k] = nil end
 
     for i = 1, 40 do
-        local name, stacks, duration, expirationTime
         if AuraUtil and AuraUtil.UnpackAuraData then
-            -- Retail 10.x / 11.x / Midnight aura API
             local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, unit == "player" and "HELPFUL" or "HARMFUL")
             if not aura then break end
-            if issecretvalue(aura.name) then
-                -- skip secret auras entirely
-            else
-                name           = aura.name
-                stacks         = aura.applications or 0
-                duration       = aura.duration or 0
-                expirationTime = issecretvalue(aura.expirationTime) and 0 or (aura.expirationTime or 0)
-
-                local key = lower(name)
+            if not issecretvalue(aura.name) then
+                local name           = aura.name
+                local stacks         = aura.applications or 0
+                local duration       = aura.duration or 0
+                local expirationTime = issecretvalue(aura.expirationTime) and 0 or (aura.expirationTime or 0)
+                local key     = lower(name)
                 local remains = math.max(expirationTime - GetTime(), 0)
-                dest[key] = {
-                    up       = true,
-                    remains  = remains,
-                    stacks   = stacks,
-                    duration = duration,
-                }
+                dest[key] = { up = true, remains = remains, stacks = stacks, duration = duration }
             end
         else
-            -- Classic / older API fallback
-            local _name, _, _stacks, _, _duration, _expTime = UnitBuff and UnitBuff(unit, i) or UnitAura(unit, i)
-            if not _name then break end
-            name           = _name
-            stacks         = _stacks or 0
-            duration       = _duration or 0
-            expirationTime = _expTime or 0
-
-            local key = lower(name)
-            local remains = math.max(expirationTime - GetTime(), 0)
-            dest[key] = {
-                up       = true,
-                remains  = remains,
-                stacks   = stacks,
-                duration = duration,
-            }
+            local name, _, stacks, _, duration, expirationTime = UnitBuff and UnitBuff(unit, i) or UnitAura(unit, i)
+            if not name then break end
+            local key     = lower(name)
+            local remains = math.max((expirationTime or 0) - GetTime(), 0)
+            dest[key] = { up = true, remains = remains, stacks = stacks or 0, duration = duration or 0 }
         end
     end
 end
@@ -205,7 +182,6 @@ local function ScanCooldowns()
         if cd then
             local startTime = cd.startTime
             local duration  = cd.duration
-            -- Skip secret cooldown values (Midnight)
             if issecretvalue(startTime) or issecretvalue(duration) then
                 snapshot.cooldowns[key] = { ready = true, remains = 0, charges = 0, maxCharges = 1, chargesFractional = 0 }
             else
@@ -217,9 +193,9 @@ local function ScanCooldowns()
                 if GetSpellCharges then
                     local chargeInfo = GetSpellCharges(spellName)
                     if chargeInfo then
-                        local cc = chargeInfo.currentCharges
-                        local mc = chargeInfo.maxCharges
-                        local cs = chargeInfo.cooldownStartTime
+                        local cc  = chargeInfo.currentCharges
+                        local mc  = chargeInfo.maxCharges
+                        local cs  = chargeInfo.cooldownStartTime
                         local cd2 = chargeInfo.cooldownDuration
                         if not issecretvalue(cc)  then charges     = cc  end
                         if not issecretvalue(mc)  then maxCharges  = mc  end
@@ -266,14 +242,12 @@ end
 
 --[[--------------------------------------------------------------------
     Resource / health helpers
-    In Midnight, UnitHealth/UnitPower etc. return secret values during
-    boss fights. We keep the last known good value if the new one is secret.
 ----------------------------------------------------------------------]]
 
 local function UpdateResources()
     local health    = UnitHealth("player")
     local healthMax = UnitHealthMax("player")
-    if not issecretvalue(health) then    snapshot.health    = health    end
+    if not issecretvalue(health)    then snapshot.health    = health    end
     if not issecretvalue(healthMax) then snapshot.healthMax = healthMax end
     local h  = snapshot.health
     local hm = snapshot.healthMax
@@ -286,7 +260,6 @@ local function UpdateResources()
     if not issecretvalue(pw) then snapshot.power     = pw end
     if not issecretvalue(pm) then snapshot.powerMax  = pm end
 
-    -- Combo points (rogue, feral, …)
     local cp = GetComboPoints and GetComboPoints("player", "target") or UnitPower("player", 4)
     if not issecretvalue(cp) then snapshot.comboPoints = cp end
 end
@@ -361,3 +334,4 @@ end)
 TMWPop.RegisterEvent("PLAYER_READY", function()
     BuildSpellList()
 end
+)
