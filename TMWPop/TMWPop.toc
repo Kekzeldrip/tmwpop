@@ -1,0 +1,12 @@
+## Interface: 110002
+## Title: TMWPop – SimC Rotation Helper
+## Notes: Reads SimulationCraft profiles and displays real-time rotation recommendations.
+## Author: TMWPop Contributors
+## Version: 0.1.0
+## SavedVariables: TMWPopDB
+
+Core.lua
+Tracker.lua
+SimCParser.lua
+Engine.lua
+UI.lua
