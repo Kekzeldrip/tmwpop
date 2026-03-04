@@ -65,6 +65,44 @@ end
 local function clamp(v, lo, hi) return math.min(math.max(v, lo), hi) end
 
 --[[--------------------------------------------------------------------
+    Spell API wrappers (C_Spell for TWW 11.x, fallback for Classic)
+----------------------------------------------------------------------]]
+
+local GetSpellCooldown
+if C_Spell and C_Spell.GetSpellCooldown then
+    local _fn = C_Spell.GetSpellCooldown
+    GetSpellCooldown = function(spell)
+        local result = _fn(spell)
+        if not result then return nil end
+        return result  -- table: { startTime, duration, isEnabled, modRate }
+    end
+else
+    local _fn = _G.GetSpellCooldown
+    GetSpellCooldown = function(spell)
+        local startTime, duration, isEnabled, modRate = _fn(spell)
+        if not startTime then return nil end
+        return { startTime = startTime, duration = duration, isEnabled = isEnabled, modRate = modRate or 1 }
+    end
+end
+
+local GetSpellCharges
+if C_Spell and C_Spell.GetSpellCharges then
+    local _fn = C_Spell.GetSpellCharges
+    GetSpellCharges = function(spell)
+        local result = _fn(spell)
+        if not result then return nil end
+        return result  -- table: { currentCharges, maxCharges, cooldownStartTime, cooldownDuration, chargeModRate }
+    end
+elseif _G.GetSpellCharges then
+    local _fn = _G.GetSpellCharges
+    GetSpellCharges = function(spell)
+        local currentCharges, maxCharges, cooldownStartTime, cooldownDuration = _fn(spell)
+        if not cooldownStartTime then return nil end
+        return { currentCharges = currentCharges, maxCharges = maxCharges, cooldownStartTime = cooldownStartTime, cooldownDuration = cooldownDuration, chargeModRate = 1 }
+    end
+end
+
+--[[--------------------------------------------------------------------
     Aura scanning
 ----------------------------------------------------------------------]]
 
@@ -107,14 +145,30 @@ end
 local trackedSpells = {}   -- populated once on PLAYER_READY
 
 local function BuildSpellList()
-    -- Gather spells from spellbook tabs
-    local numTabs = GetNumSpellTabs and GetNumSpellTabs() or 0
-    for tab = 1, numTabs do
-        local _, _, offset, numSpells = GetSpellTabInfo(tab)
-        for j = offset + 1, offset + numSpells do
-            local spellName = GetSpellBookItemName(j, "spell")
-            if spellName then
-                trackedSpells[lower(spellName)] = spellName
+    if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines then
+        -- TWW 11.x spellbook API
+        local numLines = C_SpellBook.GetNumSpellBookSkillLines()
+        for i = 1, numLines do
+            local info = C_SpellBook.GetSpellBookSkillLineInfo(i)
+            if info then
+                for j = info.itemIndexOffset + 1, info.itemIndexOffset + info.numSpellBookItems do
+                    local itemInfo = C_SpellBook.GetSpellBookItemInfo(j, Enum.SpellBookSpellBank.Player)
+                    if itemInfo and itemInfo.name then
+                        trackedSpells[lower(itemInfo.name)] = itemInfo.name
+                    end
+                end
+            end
+        end
+    else
+        -- Classic / older retail spellbook API
+        local numTabs = GetNumSpellTabs and GetNumSpellTabs() or 0
+        for tab = 1, numTabs do
+            local _, _, offset, numSpells = GetSpellTabInfo(tab)
+            for j = offset + 1, offset + numSpells do
+                local spellName = GetSpellBookItemName(j, "spell")
+                if spellName then
+                    trackedSpells[lower(spellName)] = spellName
+                end
             end
         end
     end
@@ -123,18 +177,24 @@ end
 local function ScanCooldowns()
     local now = GetTime()
     for key, spellName in pairs(trackedSpells) do
-        local start, dur, enabled = GetSpellCooldown(spellName)
-        if start then
+        local cd = GetSpellCooldown(spellName)
+        if cd then
             local remains = 0
-            if start > 0 and dur > GCD_THRESHOLD then
-                remains = math.max(start + dur - now, 0)
+            if cd.startTime > 0 and cd.duration > GCD_THRESHOLD then
+                remains = math.max(cd.startTime + cd.duration - now, 0)
             end
             local charges, maxCharges, chargeStart, chargeDur = 0, 1, 0, 0
             if GetSpellCharges then
-                charges, maxCharges, chargeStart, chargeDur = GetSpellCharges(spellName) or 0, 1, 0, 0
+                local chargeInfo = GetSpellCharges(spellName)
+                if chargeInfo then
+                    charges     = chargeInfo.currentCharges    or 0
+                    maxCharges  = chargeInfo.maxCharges        or 1
+                    chargeStart = chargeInfo.cooldownStartTime or 0
+                    chargeDur   = chargeInfo.cooldownDuration  or 0
+                end
             end
             local frac = charges or 0
-            if chargeDur and chargeDur > 0 and chargeStart and chargeStart > 0 then
+            if chargeDur > 0 and chargeStart > 0 then
                 frac = frac + clamp((now - chargeStart) / chargeDur, 0, 1)
             end
             snapshot.cooldowns[key] = {
@@ -153,9 +213,9 @@ end
 ----------------------------------------------------------------------]]
 
 local function UpdateGCD()
-    local start, dur = GetSpellCooldown(GCD_SPELL_ID)
-    if start and start > 0 then
-        snapshot.gcdRemains = math.max(start + dur - GetTime(), 0)
+    local cd = GetSpellCooldown(GCD_SPELL_ID)
+    if cd and cd.startTime and cd.startTime > 0 then
+        snapshot.gcdRemains = math.max(cd.startTime + cd.duration - GetTime(), 0)
     else
         snapshot.gcdRemains = 0
     end
