@@ -7,6 +7,10 @@
 local Engine = {}
 TMWPop.Engine = Engine
 
+-- Maximum recursion depth for nested call_action_list / run_action_list
+-- chains.  Prevents infinite loops if a profile accidentally creates a cycle.
+local MAX_RECURSION_DEPTH = 10
+
 --- Current compiled profile (set via Engine.LoadProfile)
 local activeProfile = nil
 
@@ -198,7 +202,7 @@ Engine.ResolveIdent  = resolveIdent
 
 local function evaluateList(listName, profile, snap, depth)
     depth = depth or 0
-    if depth > 10 then return nil end  -- guard against infinite recursion
+    if depth > MAX_RECURSION_DEPTH then return nil end
 
     local list = profile.lists[listName]
     if not list then return nil end

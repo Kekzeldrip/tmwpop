@@ -15,6 +15,9 @@
 local Tracker = {}
 TMWPop.Tracker = Tracker
 
+local GCD_THRESHOLD = 1.5   -- seconds; cooldowns <= this are GCD-only
+local GCD_SPELL_ID  = 61304 -- hidden GCD spell used by the Blizzard API
+
 --[[--------------------------------------------------------------------
     Snapshot structure
 ----------------------------------------------------------------------]]
@@ -123,7 +126,7 @@ local function ScanCooldowns()
         local start, dur, enabled = GetSpellCooldown(spellName)
         if start then
             local remains = 0
-            if start > 0 and dur > 1.5 then -- skip GCD-only CDs
+            if start > 0 and dur > GCD_THRESHOLD then
                 remains = math.max(start + dur - now, 0)
             end
             local charges, maxCharges, chargeStart, chargeDur = 0, 1, 0, 0
@@ -150,7 +153,7 @@ end
 ----------------------------------------------------------------------]]
 
 local function UpdateGCD()
-    local start, dur = GetSpellCooldown(61304) -- GCD spell ID
+    local start, dur = GetSpellCooldown(GCD_SPELL_ID)
     if start and start > 0 then
         snapshot.gcdRemains = math.max(start + dur - GetTime(), 0)
     else
