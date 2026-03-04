@@ -64,8 +64,17 @@ end
 
 local function clamp(v, lo, hi) return math.min(math.max(v, lo), hi) end
 
+-- TWW returns "secret" tainted values from unit functions in certain contexts.
+-- tonumber() on a secret value returns nil, so we use this as a safe guard.
+-- This mirrors what TellMeWhen does with issecretvalue() in Resources.lua.
+local function safeNum(v, default)
+    return tonumber(v) or default
+end
+
 --[[--------------------------------------------------------------------
     Spell API wrappers (C_Spell for TWW 11.x, fallback for Classic)
+    Mirrors the logic in ascott18/TellMeWhen Components/Core/Common/Cooldowns.lua
+    but standalone – no dependency on TMW.COMMON.
 ----------------------------------------------------------------------]]
 
 local GetSpellCooldown
@@ -179,29 +188,31 @@ local function ScanCooldowns()
     for key, spellName in pairs(trackedSpells) do
         local cd = GetSpellCooldown(spellName)
         if cd then
+            local startTime = safeNum(cd.startTime, 0)
+            local duration  = safeNum(cd.duration,  0)
             local remains = 0
-            if cd.startTime > 0 and cd.duration > GCD_THRESHOLD then
-                remains = math.max(cd.startTime + cd.duration - now, 0)
+            if startTime > 0 and duration > GCD_THRESHOLD then
+                remains = math.max(startTime + duration - now, 0)
             end
             local charges, maxCharges, chargeStart, chargeDur = 0, 1, 0, 0
             if GetSpellCharges then
                 local chargeInfo = GetSpellCharges(spellName)
                 if chargeInfo then
-                    charges     = chargeInfo.currentCharges    or 0
-                    maxCharges  = chargeInfo.maxCharges        or 1
-                    chargeStart = chargeInfo.cooldownStartTime or 0
-                    chargeDur   = chargeInfo.cooldownDuration  or 0
+                    charges     = safeNum(chargeInfo.currentCharges,    0)
+                    maxCharges  = safeNum(chargeInfo.maxCharges,        1)
+                    chargeStart = safeNum(chargeInfo.cooldownStartTime, 0)
+                    chargeDur   = safeNum(chargeInfo.cooldownDuration,  0)
                 end
             end
-            local frac = charges or 0
+            local frac = charges
             if chargeDur > 0 and chargeStart > 0 then
                 frac = frac + clamp((now - chargeStart) / chargeDur, 0, 1)
             end
             snapshot.cooldowns[key] = {
                 ready              = remains == 0,
                 remains            = remains,
-                charges            = charges or 0,
-                maxCharges         = maxCharges or 1,
+                charges            = charges,
+                maxCharges         = maxCharges,
                 chargesFractional  = frac,
             }
         end
@@ -214,8 +225,14 @@ end
 
 local function UpdateGCD()
     local cd = GetSpellCooldown(GCD_SPELL_ID)
-    if cd and cd.startTime and cd.startTime > 0 then
-        snapshot.gcdRemains = math.max(cd.startTime + cd.duration - GetTime(), 0)
+    if cd then
+        local startTime = safeNum(cd.startTime, 0)
+        local duration  = safeNum(cd.duration,  0)
+        if startTime > 0 then
+            snapshot.gcdRemains = math.max(startTime + duration - GetTime(), 0)
+        else
+            snapshot.gcdRemains = 0
+        end
     else
         snapshot.gcdRemains = 0
     end
@@ -226,25 +243,29 @@ end
 ----------------------------------------------------------------------]]
 
 local function UpdateResources()
-    snapshot.health    = UnitHealth("player") or 1
-    snapshot.healthMax = UnitHealthMax("player") or 1
-    snapshot.healthPct = snapshot.healthMax > 0 and (snapshot.health / snapshot.healthMax * 100) or 100
+    local health    = safeNum(UnitHealth("player"),    1)
+    local healthMax = safeNum(UnitHealthMax("player"), 1)
+    snapshot.health    = health
+    snapshot.healthMax = healthMax
+    snapshot.healthPct = healthMax > 0 and (health / healthMax * 100) or 100
 
-    snapshot.powerType = UnitPowerType("player") or 0
-    snapshot.power     = UnitPower("player") or 0
-    snapshot.powerMax  = UnitPowerMax("player") or 1
+    snapshot.powerType = safeNum(UnitPowerType("player"), 0)
+    snapshot.power     = safeNum(UnitPower("player"),     0)
+    snapshot.powerMax  = safeNum(UnitPowerMax("player"),  1)
 
     -- Combo points (rogue, feral, …)
-    snapshot.comboPoints = GetComboPoints and GetComboPoints("player", "target") or UnitPower("player", 4) or 0
+    local cp = GetComboPoints and GetComboPoints("player", "target") or UnitPower("player", 4)
+    snapshot.comboPoints = safeNum(cp, 0)
 end
 
 local function UpdateTarget()
     snapshot.hasTarget = UnitExists("target") and not UnitIsFriend("player", "target")
     if snapshot.hasTarget then
-        snapshot.targetHealth    = UnitHealth("target") or 1
-        snapshot.targetHealthMax = UnitHealthMax("target") or 1
-        snapshot.targetHealthPct = snapshot.targetHealthMax > 0
-            and (snapshot.targetHealth / snapshot.targetHealthMax * 100) or 100
+        local tHealth    = safeNum(UnitHealth("target"),    1)
+        local tHealthMax = safeNum(UnitHealthMax("target"), 1)
+        snapshot.targetHealth    = tHealth
+        snapshot.targetHealthMax = tHealthMax
+        snapshot.targetHealthPct = tHealthMax > 0 and (tHealth / tHealthMax * 100) or 100
     end
 end
 
