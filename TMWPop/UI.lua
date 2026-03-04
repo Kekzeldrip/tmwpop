@@ -13,35 +13,55 @@ TMWPop.UI = UI
 local ICON_SIZE = 64
 local UPDATE_HZ = 10            -- ticks per second while in combat
 local IDLE_HZ   = 2             -- ticks per second out of combat
-local FALLBACK_TEXTURE = "Interface\\Icons\\INV_Misc_QuestionMark"
+local FALLBACK_TEXTURE = "Interface\Icons\INV_Misc_QuestionMark"
+
+--[[--------------------------------------------------------------------
+    Compat: GetSpellInfo was removed in Midnight (12.0).
+    Use C_Spell.GetSpellInfo if available, otherwise fall back.
+    Returns a FileDataID (number) on Midnight, or a texture path on older clients.
+----------------------------------------------------------------------]]
+
+local function GetSpellIconTexture(spellName)
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(spellName)
+        if info and info.iconID then
+            return info.iconID  -- FileDataID, usable directly with SetTexture
+        end
+        return nil
+    elseif _G.GetSpellInfo then
+        local _, _, tex = _G.GetSpellInfo(spellName)
+        return tex
+    end
+    return nil
+end
 
 --[[--------------------------------------------------------------------
     Main Icon Frame
 ----------------------------------------------------------------------]]
 
 local icon = CreateFrame("Button", "TMWPopMainIcon", UIParent, "SecureActionButtonTemplate")
-icon:SetSize(ICON_SIZE, ICON_SIZE)
-icon:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
-icon:SetMovable(true)
-icon:EnableMouse(true)
-icon:RegisterForDrag("LeftButton")
+icn:SetSize(ICON_SIZE, ICON_SIZE)
+icn:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
+icn:SetMovable(true)
+icn:EnableMouse(true)
+icn:RegisterForDrag("LeftButton")
 
 -- backdrop texture
 icon.tex = icon:CreateTexture(nil, "BACKGROUND")
-icon.tex:SetAllPoints()
-icon.tex:SetTexture(FALLBACK_TEXTURE)
+icn.tex:SetAllPoints()
+icn.tex:SetTexture(FALLBACK_TEXTURE)
 
 -- cooldown sweep
 icon.cd = CreateFrame("Cooldown", "TMWPopMainIconCD", icon, "CooldownFrameTemplate")
-icon.cd:SetAllPoints()
+icn.cd:SetAllPoints()
 
 -- glow border (highlight on recommended spell)
 icon.glow = icon:CreateTexture(nil, "OVERLAY")
-icon.glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-icon.glow:SetBlendMode("ADD")
-icon.glow:SetPoint("CENTER")
-icon.glow:SetSize(ICON_SIZE * 1.4, ICON_SIZE * 1.4)
-icon.glow:SetAlpha(0)
+icn.glow:SetTexture("Interface\Buttons\UI-ActionButton-Border")
+icn.glow:SetBlendMode("ADD")
+icn.glow:SetPoint("CENTER")
+icn.glow:SetSize(ICON_SIZE * 1.4, ICON_SIZE * 1.4)
+icn.glow:SetAlpha(0)
 
 -- tooltip
 icon:SetScript("OnEnter", function(self)
@@ -73,11 +93,15 @@ local function ShowRecommendation(rec)
     local spellName = rec.action:gsub("_", " ")
     icon.spellName = spellName
 
-    -- attempt to get spell texture
-    local _, _, spellTex = GetSpellInfo(spellName)
-    icon.tex:SetTexture(spellTex or FALLBACK_TEXTURE)
+    -- GetSpellIconTexture handles Midnight (C_Spell.GetSpellInfo)
+    -- and older clients (_G.GetSpellInfo).
+    local tex = GetSpellIconTexture(spellName)
+    if tex then
+        icon.tex:SetTexture(tex)
+    else
+        icon.tex:SetTexture(FALLBACK_TEXTURE)
+    end
 
-    -- pulse glow
     icon.glow:SetAlpha(0.6)
 end
 
@@ -99,10 +123,8 @@ icon:SetScript("OnUpdate", function(self, elapsed)
         return
     end
 
-    -- refresh tracker state
     if TMWPop.Tracker then TMWPop.Tracker.Refresh() end
 
-    -- get recommendation
     local snap = TMWPop.Tracker and TMWPop.Tracker.snapshot
     local rec  = TMWPop.Engine and TMWPop.Engine.Recommend(snap)
     ShowRecommendation(rec)
@@ -131,7 +153,6 @@ local function CreateImportFrame()
     importFrame.title:SetPoint("TOP", 0, -6)
     importFrame.title:SetText("TMWPop – Import SimC Profile")
 
-    -- scrolling edit box
     local scroll = CreateFrame("ScrollFrame", "TMWPopImportScroll", importFrame, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 12, -36)
     scroll:SetPoint("BOTTOMRIGHT", -30, 44)
@@ -146,7 +167,6 @@ local function CreateImportFrame()
 
     importFrame.editBox = editBox
 
-    -- Load button
     local btn = CreateFrame("Button", nil, importFrame, "UIPanelButtonTemplate")
     btn:SetSize(100, 24)
     btn:SetPoint("BOTTOMRIGHT", -8, 8)
@@ -165,7 +185,6 @@ local function CreateImportFrame()
         importFrame:Hide()
     end)
 
-    -- Cancel button
     local cancelBtn = CreateFrame("Button", nil, importFrame, "UIPanelButtonTemplate")
     cancelBtn:SetSize(100, 24)
     cancelBtn:SetPoint("RIGHT", btn, "LEFT", -8, 0)
@@ -182,7 +201,6 @@ end
 
 TMWPop.RegisterEvent("SHOW_IMPORT", function()
     local f = CreateImportFrame()
-    -- pre-fill with saved profile
     if TMWPop.db and TMWPop.db.profile and TMWPop.db.profile ~= "" then
         f.editBox:SetText(TMWPop.db.profile)
     else
@@ -201,7 +219,6 @@ TMWPop.RegisterEvent("LOCK_CHANGED", function(_, locked)
     icon:SetMovable(not locked)
 end)
 
--- Re-load saved profile on login
 TMWPop.RegisterEvent("PLAYER_READY", function()
     if TMWPop.db and TMWPop.db.profile and TMWPop.db.profile ~= "" then
         local profile = TMWPop.Engine.LoadProfileText(TMWPop.db.profile)
